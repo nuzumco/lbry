@@ -259,16 +259,16 @@ class StreamCommands(CommandTestCase):
 
         # defaults to using all accounts to lookup channel
         await self.stream_create('hovercraft1', '0.1', channel_id=baz_id)
-        self.assertEqual((await self.claim_search('hovercraft1'))[0]['channel_name'], '@baz')
+        self.assertEqual((await self.claim_search(name='hovercraft1'))[0]['signing_channel']['name'], '@baz')
         # lookup by channel_name in all accounts
         await self.stream_create('hovercraft2', '0.1', channel_name='@baz')
-        self.assertEqual((await self.claim_search('hovercraft2'))[0]['channel_name'], '@baz')
+        self.assertEqual((await self.claim_search(name='hovercraft2'))[0]['signing_channel']['name'], '@baz')
         # uses only the specific accounts which contains the channel
         await self.stream_create('hovercraft3', '0.1', channel_id=baz_id, channel_account_id=[account2_id])
-        self.assertEqual((await self.claim_search('hovercraft3'))[0]['channel_name'], '@baz')
+        self.assertEqual((await self.claim_search(name='hovercraft3'))[0]['signing_channel']['name'], '@baz')
         # lookup by channel_name in specific account
         await self.stream_create('hovercraft4', '0.1', channel_name='@baz', channel_account_id=[account2_id])
-        self.assertEqual((await self.claim_search('hovercraft4'))[0]['channel_name'], '@baz')
+        self.assertEqual((await self.claim_search(name='hovercraft4'))[0]['signing_channel']['name'], '@baz')
         # fails when specifying account which does not contain channel
         with self.assertRaisesRegex(ValueError, "Couldn't find channel with channel_id"):
             await self.stream_create(
@@ -634,7 +634,7 @@ class StreamCommands(CommandTestCase):
         self.assertEqual(2, len(self.daemon.jsonrpc_file_list()))
         r = await self.resolve('lbry://@abc/foo')
         self.assertEqual(
-            r['lbry://@abc/foo']['claim']['claim_id'],
+            r['lbry://@abc/foo']['claim_id'],
             tx3['outputs'][0]['claim_id']
         )
 
@@ -642,10 +642,10 @@ class StreamCommands(CommandTestCase):
         tx4 = await self.publish('foo', languages='uk-UA')
         self.assertEqual(2, len(self.daemon.jsonrpc_file_list()))
         r = await self.resolve('lbry://@abc/foo')
-        claim = r['lbry://@abc/foo']['claim']
+        claim = r['lbry://@abc/foo']
         self.assertEqual(claim['txid'], tx4['outputs'][0]['txid'])
-        self.assertEqual(claim['channel_name'], '@abc')
-        self.assertEqual(claim['signature_is_valid'], True)
+        self.assertEqual(claim['signing_channel']['name'], '@abc')
+        self.assertEqual(claim['is_channel_signature_valid'], True)
         self.assertEqual(claim['value']['languages'], ['uk-UA'])
 
     async def test_claim_search(self):
@@ -690,7 +690,7 @@ class StreamCommands(CommandTestCase):
         self.assertEqual(len(claims), 3)
         claims = await self.claim_search(channel_name="@abc", channel_id=channel_id)
         self.assertEqual(len(claims), 3)
-        claims = await self.claim_search(channel_name=f"@abc#{channel_id}")
+        claims = await self.claim_search(channel=f"@abc#{channel_id}")
         self.assertEqual(len(claims), 3)
 
         await self.stream_abandon(claim_id=claims[0]['claim_id'])
@@ -736,12 +736,14 @@ class StreamCommands(CommandTestCase):
         # Original channel doesnt exists anymore, so the signature is invalid. For invalid signatures, resolution is
         # only possible outside a channel
         response = await self.resolve('lbry://@abc/on-channel-claim')
-        self.assertNotIn('claim', response['lbry://@abc/on-channel-claim'])
+        self.assertEqual(response, {
+            'lbry://@abc/on-channel-claim': {'error': 'lbry://@abc/on-channel-claim did not resolve to a claim'}
+        })
         response = await self.resolve('lbry://on-channel-claim')
-        self.assertIs(False, response['lbry://on-channel-claim']['claim']['signature_is_valid'])
+        self.assertNotIn('is_channel_signature_valid', response['lbry://on-channel-claim'])
         direct_uri = 'lbry://on-channel-claim#' + orphan_claim_id
         response = await self.resolve(direct_uri)
-        self.assertIs(False, response[direct_uri]['claim']['signature_is_valid'])
+        self.assertNotIn('is_channel_signature_valid', response[direct_uri])
         await self.stream_abandon(claim_id=orphan_claim_id)
 
         uri = 'lbry://@abc/on-channel-claim'
@@ -749,7 +751,7 @@ class StreamCommands(CommandTestCase):
         valid_claim = await self.stream_create('on-channel-claim', '0.00000001', channel_id=channel['claim_id'])
         # resolves normally
         response = await self.resolve(uri)
-        self.assertTrue(response[uri]['claim']['signature_is_valid'])
+        self.assertTrue(response[uri]['is_channel_signature_valid'])
 
         # ooops! claimed a valid conflict! (this happens on the wild, mostly by accident or race condition)
         await self.stream_create(
@@ -758,44 +760,29 @@ class StreamCommands(CommandTestCase):
 
         # it still resolves! but to the older claim
         response = await self.resolve(uri)
-        self.assertTrue(response[uri]['claim']['signature_is_valid'])
-        self.assertEqual(response[uri]['claim']['txid'], valid_claim['txid'])
-        claims = (await self.daemon.jsonrpc_claim_search('on-channel-claim'))['items']
+        self.assertTrue(response[uri]['is_channel_signature_valid'])
+        self.assertEqual(response[uri]['txid'], valid_claim['txid'])
+        claims = await self.claim_search(name='on-channel-claim')
         self.assertEqual(2, len(claims))
-        signer_ids = set([claim['value'].signing_channel_id for claim in claims])
-        self.assertEqual({channel['claim_id']}, signer_ids)
+        self.assertEqual(
+            {channel['claim_id']}, {claim['signing_channel']['claim_id'] for claim in claims}
+        )
 
     async def test_normalization_resolution(self):
 
-        # this test assumes that the lbrycrd forks normalization at height == 250 on regtest
+        one = 'ΣίσυφοςﬁÆ'
+        two = 'ΣΊΣΥΦΟσFIæ'
 
-        c1 = await self.stream_create('ΣίσυφοςﬁÆ', '0.1')
-        c2 = await self.stream_create('ΣΊΣΥΦΟσFIæ', '0.2')
+        _ = await self.stream_create(one, '0.1')
+        c = await self.stream_create(two, '0.2')
 
-        r1 = await self.daemon.jsonrpc_resolve(urls='lbry://ΣίσυφοςﬁÆ')
-        r2 = await self.daemon.jsonrpc_resolve(urls='lbry://ΣΊΣΥΦΟσFIæ')
+        winner_id = c['outputs'][0]['claim_id']
 
-        r1c = list(r1.values())[0]['claim']['claim_id']
-        r2c = list(r2.values())[0]['claim']['claim_id']
-        self.assertEqual(c1['outputs'][0]['claim_id'], r1c)
-        self.assertEqual(c2['outputs'][0]['claim_id'], r2c)
-        self.assertNotEqual(r1c, r2c)
+        r1 = await self.resolve(f'lbry://{one}')
+        r2 = await self.resolve(f'lbry://{two}')
 
-        await self.generate(50)
-        self.assertTrue(self.ledger.headers.height > 250)
-
-        r3 = await self.daemon.jsonrpc_resolve(urls='lbry://ΣίσυφοςﬁÆ')
-        r4 = await self.daemon.jsonrpc_resolve(urls='lbry://ΣΊΣΥΦΟσFIæ')
-
-        r3c = list(r3.values())[0]['claim']['claim_id']
-        r4c = list(r4.values())[0]['claim']['claim_id']
-        r3n = list(r3.values())[0]['claim']['name']
-        r4n = list(r4.values())[0]['claim']['name']
-
-        self.assertEqual(c2['outputs'][0]['claim_id'], r3c)
-        self.assertEqual(c2['outputs'][0]['claim_id'], r4c)
-        self.assertEqual(r3c, r4c)
-        self.assertEqual(r3n, r4n)
+        self.assertEqual(winner_id, r1[f'lbry://{one}']['claim_id'])
+        self.assertEqual(winner_id, r2[f'lbry://{two}']['claim_id'])
 
     async def test_resolve_old_claim(self):
         channel = await self.daemon.jsonrpc_channel_create('@olds', '1.0')
@@ -807,8 +794,8 @@ class StreamCommands(CommandTestCase):
         await self.broadcast(tx)
         await self.confirm_tx(tx.id)
 
-        response = await self.daemon.jsonrpc_resolve(urls='@olds/example')
-        self.assertTrue(response['@olds/example']['claim']['signature_is_valid'])
+        response = await self.resolve('@olds/example')
+        self.assertTrue(response['@olds/example']['is_channel_signature_valid'])
 
         claim.publisherSignature.signature = bytes(reversed(claim.publisherSignature.signature))
         tx = await Transaction.claim_create(
@@ -818,10 +805,10 @@ class StreamCommands(CommandTestCase):
         await self.broadcast(tx)
         await self.confirm_tx(tx.id)
 
-        response = await self.daemon.jsonrpc_resolve(urls='bad_example')
-        self.assertIs(False, response['bad_example']['claim']['signature_is_valid'], response)
-        response = await self.daemon.jsonrpc_resolve(urls='@olds/bad_example')
-        self.assertEqual('URI lbry://@olds/bad_example cannot be resolved', response['@olds/bad_example']['error'])
+        response = await self.resolve('bad_example')
+        self.assertFalse(response['bad_example']['is_channel_signature_valid'])
+        response = await self.resolve('@olds/bad_example')
+        self.assertFalse(response['@olds/bad_example']['is_channel_signature_valid'])
 
 
 def generate_signed_legacy(address: bytes, output: Output):
