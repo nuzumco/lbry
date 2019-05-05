@@ -3,7 +3,6 @@ import logging
 import asyncio
 from functools import lru_cache
 
-from cryptography.exceptions import InvalidSignature
 from binascii import unhexlify, hexlify
 
 from lbrynet.wallet.account import validate_claim_id
@@ -343,12 +342,9 @@ def validate_claim_signature_and_get_channel_name(claim_result, certificate_clai
                                                   claim_tx=None, cert_tx=None):
     valid_signature = False
     if cert_tx and certificate_claim and claim_tx and claim_result:
-        try:
-            valid_signature = claim_tx.outputs[claim_result['nout']].is_signed_by(
-                cert_tx.outputs[certificate_claim['nout']], ledger
-            )
-        except InvalidSignature:
-            pass
+        valid_signature = claim_tx.outputs[claim_result['nout']].is_signed_by(
+            cert_tx.outputs[certificate_claim['nout']], ledger
+        )
         if not valid_signature:
             log.warning("lbry://%s#%s has an invalid signature",
                         claim_result['name'], claim_result['claim_id'])
