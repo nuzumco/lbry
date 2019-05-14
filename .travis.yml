@@ -83,7 +83,7 @@ jobs:
         - echo `pip3 --version`
         - pip3 install pyinstaller
         - pip3 install git+https://github.com/lbryio/torba.git
-        - echo "run set build"
+        - echo "run set build "
         - python3 scripts/set_build.py
         - echo "ran set build"
         - pip3 install -e .
