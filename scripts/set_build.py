@@ -19,7 +19,7 @@ def main():
 def get_build():
     try:
         tag = subprocess.check_output(['git', 'describe', '--exact-match', '--all']).strip()
-        print(f"Tag info: {tag}")
+        print(f"Tag info: \"{tag.decode()}\"")
         if re.match('tags\/v\d+\.\d+\.\d+rc\d+$', tag.decode()):
             print('Build: rc')
             return 'rc'

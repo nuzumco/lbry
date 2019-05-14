@@ -85,7 +85,7 @@ jobs:
         - pip3 install git+https://github.com/lbryio/torba.git
         - echo "run set build"
         - python3 scripts/set_build.py
-        - echo "ran set build
+        - echo "ran set build"
         - pip3 install -e .
       script:
         - pyinstaller -F -n lbrynet lbrynet/extras/cli.py
