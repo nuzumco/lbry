@@ -56,6 +56,8 @@ class KademliaRPC:
                 pass
             else:
                 raise ValueError("Invalid token")
+        if len(self.protocol.data_store.filter_expired_peers(blob_hash)) > constants.k:
+            raise ValueError("Invalid token")
         self.protocol.data_store.add_peer_to_blob(
             rpc_contact, blob_hash
         )
